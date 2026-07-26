@@ -359,6 +359,18 @@ const ProviderSettings: React.FC = () => {
   // Absence means "never tested" (show as not supported).
   const [webSearchTestState, setWebSearchTestState] = useState<Record<string, 'testing' | 'success' | 'failed'>>({});
 
+  // Uncommitted text for the credential fields; null means "no local edit in progress".
+  // These must not save per keystroke: every save rewrites .credentials.json, and for
+  // the base URL it also changes the provider ref (which is derived from the URL), so
+  // the selected provider would vanish mid-word. Committed on blur or Enter instead.
+  const [apiKeyDraft, setApiKeyDraft] = useState<string | null>(null);
+  const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null);
+
+  useEffect(() => {
+    setApiKeyDraft(null);
+    setBaseUrlDraft(null);
+  }, [selectedProviderRef]);
+
   // New provider form
   const [showAdd, setShowAdd] = useState(false);
 
@@ -465,6 +477,7 @@ const ProviderSettings: React.FC = () => {
   // Run the web-search probe for a provider and reflect the result in UI state.
   // Kicked off automatically after import and also from the manual "Retest" button.
   const handleTestWebSearch = async (providerRef: string) => {
+    if (webSearchTestState[providerRef] === 'testing') return;
     setWebSearchTestState(prev => ({ ...prev, [providerRef]: 'testing' }));
     try {
       const result = await testProviderWebSearch(providerRef);
@@ -481,6 +494,28 @@ const ProviderSettings: React.FC = () => {
     const updated = await updateProvider(providerRef, updates);
     setProviderList(prev => prev.map(p => getProviderRef(p) === providerRef ? { ...p, ...updated } : p));
     setSelectedProviderRef(getProviderRef(updated));
+  };
+
+  const commitApiKeyDraft = async (providerRef: string, current: string) => {
+    const draft = apiKeyDraft;
+    setApiKeyDraft(null);
+    if (draft === null || draft === current) return;
+    await handleUpdate(providerRef, { apiKey: draft });
+  };
+
+  const commitBaseUrlDraft = async (providerRef: string, current: string, format: Provider['format']) => {
+    const draft = baseUrlDraft;
+    setBaseUrlDraft(null);
+    if (draft === null || draft === current) return;
+    const detected = detectProvider(draft);
+    await handleUpdate(providerRef, {
+      baseUrl: draft,
+      ...(detected && detected.format !== format ? { format: detected.format } : {}),
+      // A different URL invalidates the previous probe result — the user must retest.
+      supportsWebSearch: false,
+      webSearchStrategy: null,
+      webSearchTestedAt: undefined,
+    });
   };
 
   const handleDelete = async (providerRef: string) => {
@@ -838,8 +873,14 @@ const ProviderSettings: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <input
                       type={showKeyMap[selectedRef] ? 'text' : 'password'}
-                      value={selected.apiKey || ''}
-                      onChange={e => handleUpdate(selectedRef, { apiKey: e.target.value })}
+                      value={apiKeyDraft ?? selected.apiKey ?? ''}
+                      onChange={e => setApiKeyDraft(e.target.value)}
+                      onBlur={() => commitApiKeyDraft(selectedRef, selected.apiKey || '')}
+                      onKeyDown={e => {
+                        if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                        e.preventDefault();
+                        commitApiKeyDraft(selectedRef, selected.apiKey || '');
+                      }}
                       placeholder="sk-..."
                       className="flex-1 bg-transparent border border-claude-border rounded-[8px] px-3 py-2 text-[14px] text-claude-text outline-none focus:border-[#387ee0]/60 transition-colors placeholder:text-claude-textSecondary/40 font-mono"
                     />
@@ -857,17 +898,13 @@ const ProviderSettings: React.FC = () => {
                   <label className="text-[12px] text-claude-textSecondary mb-1.5 block font-medium">API 地址</label>
                   <input
                     type="text"
-                    value={selected.baseUrl || ''}
-                    onChange={e => {
-                      const newUrl = e.target.value;
-                      const det = detectProvider(newUrl);
-                      const patch: Partial<Provider> = { baseUrl: newUrl };
-                      if (det && det.format !== selected.format) patch.format = det.format;
-                      // URL change invalidates any previous test result — user must retest
-                      patch.supportsWebSearch = false;
-                      patch.webSearchStrategy = null;
-                      patch.webSearchTestedAt = undefined;
-                      handleUpdate(selectedRef, patch);
+                    value={baseUrlDraft ?? selected.baseUrl ?? ''}
+                    onChange={e => setBaseUrlDraft(e.target.value)}
+                    onBlur={() => commitBaseUrlDraft(selectedRef, selected.baseUrl || '', selected.format)}
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                      e.preventDefault();
+                      commitBaseUrlDraft(selectedRef, selected.baseUrl || '', selected.format);
                     }}
                     className="w-full bg-transparent border border-claude-border rounded-[8px] px-3 py-2 text-[14px] text-claude-text outline-none focus:border-[#387ee0]/60 transition-colors placeholder:text-claude-textSecondary/40 font-mono"
                   />
@@ -1167,8 +1204,9 @@ const ProviderSettings: React.FC = () => {
             const providerRef = getProviderRef(provider);
             setSelectedProviderRef(providerRef);
             setShowAdd(false);
-            // Auto-test web search capability
-            setTimeout(() => { handleTestWebSearch(providerRef); }, 300);
+            // Auto-test web search capability. Runs off the UI thread and is bounded by
+            // the native probe budget, so it is safe to fire and forget here.
+            void handleTestWebSearch(providerRef);
           }}
         />
       )}

@@ -56,6 +56,9 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
   const [copilotEnterpriseDomain, setCopilotEnterpriseDomain] = useState('');
   const [oauthStatusMessage, setOauthStatusMessage] = useState('');
   const [oauthBusy, setOauthBusy] = useState(false);
+  // Guards the final createProvider call. Without it, repeated Enter presses fire
+  // concurrent creates and end up with duplicate providers.
+  const [submitting, setSubmitting] = useState(false);
 
   const getDefaultAuthMode = (provider: CompatibleApiProvider): CompatibleAuthMode => {
     return provider === 'openai-like'
@@ -172,7 +175,7 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
   };
 
   const handleSubmitCustomConfig = async (value: string) => {
-    if (dialogState.state !== 'custom_config') return;
+    if (dialogState.state !== 'custom_config' || submitting) return;
 
     const { provider, authMode, step, variant } = dialogState;
 
@@ -220,6 +223,7 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
       setCustomModels(value.trim());
 
       // Create provider
+      setSubmitting(true);
       try {
         const providerId = getProviderIdForVariant(variant, provider, customBaseURL);
         const created = await createProvider({
@@ -238,6 +242,8 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
         onSuccess(created);
       } catch (err: any) {
         setDialogState({ state: 'error', message: err.message || 'Failed to create provider' });
+      } finally {
+        setSubmitting(false);
       }
       return;
     }
@@ -491,8 +497,14 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
                   else setCustomModels(e.target.value);
                 }}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') handleSubmitCustomConfig(value);
+                  if (e.key !== 'Enter') return;
+                  // An IME (e.g. Chinese pinyin) uses Enter to accept a candidate word.
+                  // Without this guard that Enter also advances the wizard step.
+                  if (e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  handleSubmitCustomConfig(value);
                 }}
+                disabled={submitting}
                 placeholder={placeholder}
                 className="w-full px-3 py-2.5 bg-claude-input border border-claude-border rounded-lg text-[14px] text-claude-text outline-none focus:border-[#387ee0]/60 transition-colors placeholder:text-claude-textSecondary/40"
                 autoFocus
@@ -508,9 +520,10 @@ const ProviderAddDialog: React.FC<Props> = ({ onClose, onSuccess }) => {
             <div className="flex gap-3 pt-2">
               <button
                 onClick={() => handleSubmitCustomConfig(value)}
-                className="px-4 py-2 bg-[#333] text-white text-[14px] font-medium rounded-lg hover:bg-[#1a1a1a] dark:bg-white dark:text-black dark:hover:bg-[#e5e5e5] transition-colors"
+                disabled={submitting}
+                className="px-4 py-2 bg-[#333] text-white text-[14px] font-medium rounded-lg hover:bg-[#1a1a1a] dark:bg-white dark:text-black dark:hover:bg-[#e5e5e5] transition-colors disabled:opacity-50"
               >
-                {step === 'models' ? '完成' : '继续'}
+                {submitting ? '保存中…' : step === 'models' ? '完成' : '继续'}
               </button>
               <button
                 onClick={() => {

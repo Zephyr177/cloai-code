@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -535,13 +535,22 @@ fn provider_not_found_reason(reason: &str) -> bool {
         || normalized.contains("no channel")
 }
 
+/// Per-request timeout for a single web-search capability probe.
+///
+/// Kept short on purpose: the probe fans out over models and auth styles, and an
+/// unreachable base URL burns the full timeout on every attempt.
+const WEB_SEARCH_PROBE_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// Upper bound on the whole probe, however many attempts it would otherwise make.
+const WEB_SEARCH_PROBE_BUDGET: Duration = Duration::from_secs(30);
+
 fn anthropic_http_probe(
     provider: &ImportedProvider,
     auth_style: &str,
     model_id: &str,
 ) -> WebSearchTestResult {
     let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(45))
+        .timeout(WEB_SEARCH_PROBE_TIMEOUT)
         .user_agent("cloai-desktop-websearch-probe/1.0")
         .build()
     {
@@ -698,10 +707,17 @@ fn probe_anthropic_web_search(provider: &ImportedProvider) -> WebSearchTestResul
         };
     }
 
+    let deadline = Instant::now() + WEB_SEARCH_PROBE_BUDGET;
     let mut attempts = Vec::<WebSearchTestResult>::new();
     for model_id in enabled_models {
+        if Instant::now() >= deadline {
+            break;
+        }
         let model_id = model_id.trim_end_matches("-thinking").to_string();
         for auth_style in ["bearer", "x-api-key"] {
+            if Instant::now() >= deadline {
+                break;
+            }
             let result = anthropic_http_probe(provider, auth_style, &model_id);
             if result.ok {
                 return result;
@@ -762,7 +778,7 @@ fn probe_openai_web_search(_provider: &ImportedProvider) -> WebSearchTestResult 
     };
 
     let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(WEB_SEARCH_PROBE_TIMEOUT)
         .build()
     {
         Ok(client) => client,

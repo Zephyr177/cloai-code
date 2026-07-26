@@ -108,14 +108,19 @@ pub(crate) struct WorkspaceGitStagePayload {
     staged: bool,
 }
 
-async fn run_workspace_blocking<T, F>(task: F) -> Result<T, String>
+/// Runs blocking work (filesystem, network I/O, subprocesses) off the main thread.
+///
+/// Tauri v2 dispatches non-`async` commands on the main thread, which on Windows is the
+/// WebView2 message loop. Anything that blocks there freezes the entire window, so any
+/// command that can block must be `async` and hand its work to this helper.
+async fn run_blocking<T, F>(task: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(task)
         .await
-        .map_err(|error| format!("Workspace task failed: {error}"))?
+        .map_err(|error| format!("Background task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -202,28 +207,28 @@ pub(crate) fn show_item_in_folder(app: AppHandle, file_path: String) -> Result<b
 pub(crate) async fn workspace_list_entries(
     payload: WorkspaceListPayload,
 ) -> Result<workspace::WorkspaceDirectoryListing, String> {
-    run_workspace_blocking(move || workspace::list_entries(payload.root, payload.path)).await
+    run_blocking(move || workspace::list_entries(payload.root, payload.path)).await
 }
 
 #[tauri::command]
 pub(crate) async fn workspace_read_file(
     payload: WorkspaceReadFilePayload,
 ) -> Result<workspace::WorkspaceFileContent, String> {
-    run_workspace_blocking(move || workspace::read_file(payload.root, payload.path)).await
+    run_blocking(move || workspace::read_file(payload.root, payload.path)).await
 }
 
 #[tauri::command]
 pub(crate) async fn workspace_read_file_data_url(
     payload: WorkspaceReadFilePayload,
 ) -> Result<workspace::WorkspaceFileDataUrl, String> {
-    run_workspace_blocking(move || workspace::read_file_data_url(payload.root, payload.path)).await
+    run_blocking(move || workspace::read_file_data_url(payload.root, payload.path)).await
 }
 
 #[tauri::command]
 pub(crate) async fn workspace_write_file(
     payload: WorkspaceWriteFilePayload,
 ) -> Result<workspace::WorkspaceFileContent, String> {
-    run_workspace_blocking(move || workspace::write_file(payload.root, payload.path, payload.content))
+    run_blocking(move || workspace::write_file(payload.root, payload.path, payload.content))
         .await
 }
 
@@ -231,7 +236,7 @@ pub(crate) async fn workspace_write_file(
 pub(crate) async fn workspace_create_entry(
     payload: WorkspaceCreateEntryPayload,
 ) -> Result<workspace::WorkspaceEntry, String> {
-    run_workspace_blocking(move || {
+    run_blocking(move || {
         workspace::create_entry(payload.root, payload.parent, payload.name, payload.kind)
     })
     .await
@@ -239,14 +244,14 @@ pub(crate) async fn workspace_create_entry(
 
 #[tauri::command]
 pub(crate) async fn workspace_delete_path(payload: WorkspaceDeletePathPayload) -> Result<bool, String> {
-    run_workspace_blocking(move || workspace::delete_path(payload.root, payload.path)).await
+    run_blocking(move || workspace::delete_path(payload.root, payload.path)).await
 }
 
 #[tauri::command]
 pub(crate) async fn workspace_rename_path(
     payload: WorkspaceRenamePathPayload,
 ) -> Result<workspace::WorkspaceEntry, String> {
-    run_workspace_blocking(move || workspace::rename_path(payload.root, payload.path, payload.new_name))
+    run_blocking(move || workspace::rename_path(payload.root, payload.path, payload.new_name))
         .await
 }
 
@@ -254,14 +259,14 @@ pub(crate) async fn workspace_rename_path(
 pub(crate) async fn workspace_git_status(
     payload: WorkspaceGitRootPayload,
 ) -> Result<workspace::WorkspaceGitStatus, String> {
-    run_workspace_blocking(move || workspace::git_status(payload.root)).await
+    run_blocking(move || workspace::git_status(payload.root)).await
 }
 
 #[tauri::command]
 pub(crate) async fn workspace_git_diff(
     payload: WorkspaceGitDiffPayload,
 ) -> Result<workspace::WorkspaceGitDiff, String> {
-    run_workspace_blocking(move || {
+    run_blocking(move || {
         workspace::git_diff(payload.root, payload.path, payload.staged.unwrap_or(false))
     })
     .await
@@ -269,7 +274,7 @@ pub(crate) async fn workspace_git_diff(
 
 #[tauri::command]
 pub(crate) async fn workspace_git_stage(payload: WorkspaceGitStagePayload) -> Result<bool, String> {
-    run_workspace_blocking(move || workspace::git_stage(payload.root, payload.path, payload.staged))
+    run_blocking(move || workspace::git_stage(payload.root, payload.path, payload.staged))
         .await
 }
 
@@ -299,10 +304,10 @@ pub(crate) fn set_workspace_config(
 }
 
 #[tauri::command]
-pub(crate) fn get_runtime_setup_status(
+pub(crate) async fn get_runtime_setup_status(
     app: AppHandle,
 ) -> Result<runtime::RuntimeSetupStatus, String> {
-    runtime::get_runtime_setup_status(&app)
+    run_blocking(move || runtime::get_runtime_setup_status(&app)).await
 }
 
 #[tauri::command]
@@ -381,21 +386,24 @@ pub(crate) fn get_provider_models() -> Result<Vec<providers::ProviderModelListIt
 }
 
 #[tauri::command]
-pub(crate) fn test_provider_websearch(
+pub(crate) async fn test_provider_websearch(
     id: String,
 ) -> Result<providers::WebSearchTestResult, String> {
-    providers::test_provider_websearch(id)
+    run_blocking(move || providers::test_provider_websearch(id)).await
 }
 
 #[tauri::command]
-pub(crate) fn start_openai_oauth_provider(
+pub(crate) async fn start_openai_oauth_provider(
     app: AppHandle,
 ) -> Result<providers::ProviderOAuthStartResult, String> {
-    providers::start_openai_oauth_provider(|auth_url| {
-        tauri_plugin_shell::ShellExt::shell(&app)
-            .open(auth_url.to_string(), None)
-            .map_err(|error| error.to_string())
+    run_blocking(move || {
+        providers::start_openai_oauth_provider(|auth_url| {
+            tauri_plugin_shell::ShellExt::shell(&app)
+                .open(auth_url.to_string(), None)
+                .map_err(|error| error.to_string())
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -557,37 +565,40 @@ pub(crate) fn disconnect_github() -> Result<github::GithubDisconnectResult, Stri
 }
 
 #[tauri::command]
-pub(crate) fn get_github_repos(page: Option<i64>) -> Result<Vec<github::GithubRepo>, String> {
-    github::get_github_repos(page.unwrap_or(1))
+pub(crate) async fn get_github_repos(page: Option<i64>) -> Result<Vec<github::GithubRepo>, String> {
+    run_blocking(move || github::get_github_repos(page.unwrap_or(1))).await
 }
 
 #[tauri::command]
-pub(crate) fn get_github_tree(
+pub(crate) async fn get_github_tree(
     owner: String,
     repo: String,
     r#ref: Option<String>,
 ) -> Result<github::GithubTree, String> {
-    github::get_github_tree(owner, repo, r#ref)
+    run_blocking(move || github::get_github_tree(owner, repo, r#ref)).await
 }
 
 #[tauri::command]
-pub(crate) fn get_github_contents(
+pub(crate) async fn get_github_contents(
     owner: String,
     repo: String,
     path: Option<String>,
     r#ref: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    github::get_github_contents(owner, repo, path, r#ref)
+    run_blocking(move || github::get_github_contents(owner, repo, path, r#ref)).await
 }
 
 #[tauri::command]
-pub(crate) fn materialize_github(
+pub(crate) async fn materialize_github(
     conversation_id: String,
     repo_full_name: String,
     r#ref: Option<String>,
     selections: Vec<github::GithubSelection>,
 ) -> Result<github::GithubMaterializeResult, String> {
-    github::materialize_github(conversation_id, repo_full_name, r#ref, selections)
+    run_blocking(move || {
+        github::materialize_github(conversation_id, repo_full_name, r#ref, selections)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -776,10 +787,10 @@ pub(crate) fn uninstall_connector_mcp(
 }
 
 #[tauri::command]
-pub(crate) fn get_connector_composio_status(
+pub(crate) async fn get_connector_composio_status(
     user_id: Option<String>,
 ) -> Result<connectors::ConnectorComposioStatusResponse, String> {
-    connectors::get_composio_status(user_id)
+    run_blocking(move || connectors::get_composio_status(user_id)).await
 }
 
 #[tauri::command]
@@ -789,23 +800,23 @@ pub(crate) fn get_connector_composio_config(
 }
 
 #[tauri::command]
-pub(crate) fn set_connector_composio_config(
+pub(crate) async fn set_connector_composio_config(
     payload: connectors::SetConnectorComposioConfigPayload,
 ) -> Result<connectors::ConnectorComposioStatusResponse, String> {
-    connectors::set_composio_config(payload)
+    run_blocking(move || connectors::set_composio_config(payload)).await
 }
 
 #[tauri::command]
-pub(crate) fn connect_connector_via_composio(
+pub(crate) async fn connect_connector_via_composio(
     connector_id: String,
     user_id: String,
 ) -> Result<connectors::ConnectorComposioConnectResponse, String> {
-    connectors::connect_connector_via_composio(connector_id, user_id)
+    run_blocking(move || connectors::connect_connector_via_composio(connector_id, user_id)).await
 }
 
 #[tauri::command]
-pub(crate) fn uninstall_connector_composio(
+pub(crate) async fn uninstall_connector_composio(
     user_id: String,
 ) -> Result<connectors::ConnectorComposioUninstallResponse, String> {
-    connectors::uninstall_connector_composio(user_id)
+    run_blocking(move || connectors::uninstall_connector_composio(user_id)).await
 }
