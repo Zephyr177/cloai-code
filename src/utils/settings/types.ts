@@ -742,14 +742,12 @@ export const SettingsSchema = lazySchema(() =>
           'When false, thinking is disabled. When absent or true, thinking is ' +
             'enabled automatically for supported models.',
         ),
+      // Deliberately not an enum: the API owns the set of valid effort levels, and the
+      // previous `.enum(...).catch(undefined)` pair silently discarded anything outside
+      // low/medium/high on every read, so a custom level could never round-trip.
       effortLevel: z
-        .enum(
-          process.env.USER_TYPE === 'ant'
-            ? ['low', 'medium', 'high', 'max']
-            : ['low', 'medium', 'high'],
-        )
+        .string()
         .optional()
-        .catch(undefined)
         .describe('Persisted effort level for supported models.'),
       advisorModel: z
         .string()

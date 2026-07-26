@@ -3,13 +3,19 @@ import { isUltrathinkEnabled } from './thinking.js'
 import { getInitialSettings } from './settings/settings.js'
 import { isProSubscriber, isMaxSubscriber, isTeamSubscriber } from './auth.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
-import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
-import { isEnvTruthy } from './envUtils.js'
+import { modelHasCapability } from './model/capabilities.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 
 export type { EffortLevel }
 
+/**
+ * The levels we know how to label, order and cycle through in the pickers.
+ *
+ * This is NOT a validation whitelist: the API is the authority on which effort values it
+ * accepts, so any other string the user supplies is passed through untouched and shows up
+ * as-is. Adding a level here only affects presentation.
+ */
 export const EFFORT_LEVELS = [
   'low',
   'medium',
@@ -19,94 +25,72 @@ export const EFFORT_LEVELS = [
 
 export type EffortValue = EffortLevel | number
 
-// @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
+// IMPORTANT: Do not change the default effort support without notifying
+// the model launch DRI and research. This is a sensitive setting that can
+// greatly affect model quality and bashing.
 export function modelSupportsEffort(model: string): boolean {
-  const m = model.toLowerCase()
-  if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
-    return true
-  }
-  const supported3P = get3PModelCapabilityOverride(model, 'effort')
-  if (supported3P !== undefined) {
-    return supported3P
-  }
-  // Supported by a subset of Claude 4 models
-  if (m.includes('opus-4-6') || m.includes('sonnet-4-6')) {
-    return true
-  }
-  // Exclude any other known legacy models (haiku, older opus/sonnet variants)
-  if (m.includes('haiku') || m.includes('sonnet') || m.includes('opus')) {
-    return false
-  }
-
-  // IMPORTANT: Do not change the default effort support without notifying
-  // the model launch DRI and research. This is a sensitive setting that can
-  // greatly affect model quality and bashing.
-
-  // Default to true for unknown model strings on 1P.
-  // Do not default to true for 3P as they have different formats for their
-  // model strings (ex. anthropics/claude-code#30795)
-  return getAPIProvider() === 'firstParty'
+  return modelHasCapability(model, 'effort')
 }
 
-// @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
-// Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
+/**
+ * 'max' is no longer gated separately from effort itself: any model that accepts the
+ * effort parameter is offered 'max'. The API is the authority on which values it takes,
+ * so an unsupported value surfaces as an API error rather than being silently clamped.
+ * The ANTHROPIC_DEFAULT_*_MODEL_SUPPORTED_CAPABILITIES override still applies.
+ */
 export function modelSupportsMaxEffort(model: string): boolean {
   const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
   if (supported3P !== undefined) {
     return supported3P
   }
-  if (model.toLowerCase().includes('opus-4-6')) {
-    return true
-  }
-  if (process.env.USER_TYPE === 'ant' && resolveAntModel(model)) {
-    return true
-  }
-  return false
+  return modelSupportsEffort(model)
 }
 
-export function isEffortLevel(value: string): value is EffortLevel {
+/** True for the built-in levels. Custom values are still valid — see parseEffortValue. */
+export function isEffortLevel(value: string): boolean {
   return (EFFORT_LEVELS as readonly string[]).includes(value)
 }
 
+/**
+ * Normalize an effort value from the CLI, settings, or agent/skill frontmatter.
+ *
+ * Any non-empty string is accepted and forwarded to the API verbatim. Rejecting unknown
+ * values here would mean this client, not the API, decides which efforts exist — which is
+ * exactly how new levels ended up unusable. Only empty/absent input yields undefined.
+ */
 export function parseEffortValue(value: unknown): EffortValue | undefined {
-  if (value === undefined || value === null || value === '') {
+  if (value === undefined || value === null) {
     return undefined
   }
-  if (typeof value === 'number' && isValidNumericEffort(value)) {
-    return value
+  if (typeof value === 'number') {
+    return isValidNumericEffort(value) ? value : undefined
   }
-  const str = String(value).toLowerCase()
-  if (isEffortLevel(str)) {
-    return str
+  const str = String(value).trim().toLowerCase()
+  if (str === '') {
+    return undefined
   }
-  const numericValue = parseInt(str, 10)
-  if (!isNaN(numericValue) && isValidNumericEffort(numericValue)) {
-    return numericValue
+  // Whole-string match only: "4x" is a custom level, not the number 4.
+  if (/^-?\d+$/.test(str)) {
+    return Number(str)
   }
-  return undefined
+  return str
 }
 
 /**
- * Numeric values are model-default only and not persisted.
- * 'max' is session-scoped for external users (ants can persist it).
- * Write sites call this before saving to settings so the Zod schema
- * (which only accepts string levels) never rejects a write.
+ * Any effort level the user names is persisted, including custom ones — a value that
+ * survives a restart is what "set the effort level" means to the user.
+ *
+ * Numeric values stay session-scoped: they are an ant-only debugging affordance whose
+ * meaning is tied to a specific model, so persisting them would silently follow the user
+ * onto models where the number means something else.
  */
 export function toPersistableEffort(
   value: EffortValue | undefined,
 ): EffortLevel | undefined {
-  if (value === 'low' || value === 'medium' || value === 'high') {
-    return value
-  }
-  if (value === 'max' && process.env.USER_TYPE === 'ant') {
-    return value
-  }
-  return undefined
+  return typeof value === 'string' ? value : undefined
 }
 
 export function getInitialEffortSetting(): EffortLevel | undefined {
-  // toPersistableEffort filters 'max' for non-ants on read, so a manually
-  // edited settings.json doesn't leak session-scoped max into a fresh session.
   return toPersistableEffort(getInitialSettings().effortLevel)
 }
 
@@ -157,13 +141,10 @@ export function resolveAppliedEffort(
   if (envOverride === null) {
     return undefined
   }
-  const resolved =
-    envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
-  // API rejects 'max' on non-Opus-4.6 models — downgrade to 'high'.
-  if (resolved === 'max' && !modelSupportsMaxEffort(model)) {
-    return 'high'
-  }
-  return resolved
+  // No clamping: configureEffortParams already drops the parameter for models that don't
+  // take effort at all, and for models that do, the API decides which values are valid.
+  // Rewriting the value here only hid unsupported levels behind a wrong-but-plausible one.
+  return envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
 }
 
 /**
@@ -183,7 +164,7 @@ export function getDisplayedEffortLevel(
  * Build the ` with {level} effort` suffix shown in Logo/Spinner.
  * Returns empty string if the user hasn't explicitly set an effort value.
  * Delegates to resolveAppliedEffort() so the displayed level matches what
- * the API actually receives (including max→high clamp for non-Opus models).
+ * the API actually receives.
  */
 export function getEffortSuffix(
   model: string,
@@ -201,10 +182,9 @@ export function isValidNumericEffort(value: number): boolean {
 
 export function convertEffortValueToLevel(value: EffortValue): EffortLevel {
   if (typeof value === 'string') {
-    // Runtime guard: value may come from remote config (GrowthBook) where
-    // TypeScript types can't help us. Coerce unknown strings to 'high'
-    // rather than passing them through unchecked.
-    return isEffortLevel(value) ? value : 'high'
+    // Custom levels are returned as-is. Coercing them to 'high' here made the status bar
+    // report a level the API was never sent.
+    return value
   }
   if (process.env.USER_TYPE === 'ant' && typeof value === 'number') {
     if (value <= 50) return 'low'
@@ -230,7 +210,9 @@ export function getEffortLevelDescription(level: EffortLevel): string {
     case 'high':
       return 'Comprehensive implementation with extensive testing and documentation'
     case 'max':
-      return 'Maximum capability with deepest reasoning (Opus 4.6 only)'
+      return 'Maximum capability with deepest reasoning'
+    default:
+      return `Custom effort level "${level}" (passed through to the API)`
   }
 }
 

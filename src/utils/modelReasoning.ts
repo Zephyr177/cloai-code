@@ -6,6 +6,7 @@ import type {
 import {
   convertEffortValueToLevel,
   type EffortLevel,
+  type EffortValue,
   getDefaultEffortForModel,
   modelSupportsEffort,
   modelSupportsMaxEffort,
@@ -189,16 +190,27 @@ export function getReasoningSpec(input: {
   variant?: import('./customApiStorage.js').ProviderVariant
   model: string
   storedReasoning?: ProviderReasoningConfig
+  /**
+   * The effort currently in force. A custom level (set via `/effort` or `--effort`) is not
+   * in the built-in list, so without this clampReasoningSelection would treat it as
+   * invalid and silently reset it to the model default when the user opens /model.
+   */
+  currentEffort?: EffortValue
 }): ReasoningSpec {
-  const { providerKind, authMode, variant, model, storedReasoning } = input
+  const { providerKind, authMode, variant, model, storedReasoning, currentEffort } = input
   const mode = getReasoningMode(providerKind, authMode, model, variant)
 
   if (mode === 'anthropic-effort') {
     const defaultEffort = getAnthropicDefaultEffort(model)
     const supportsMax = modelSupportsMaxEffort(model)
-    const effortOptions = supportsMax
-      ? (['low', 'medium', 'high', 'max'] as const)
-      : (['low', 'medium', 'high'] as const)
+    const builtinOptions: readonly EffortLevel[] = supportsMax
+      ? ['low', 'medium', 'high', 'max']
+      : ['low', 'medium', 'high']
+    const custom =
+      typeof currentEffort === 'string' && !builtinOptions.includes(currentEffort)
+        ? [currentEffort]
+        : []
+    const effortOptions = [...builtinOptions, ...custom]
     return {
       mode,
       effortOptions,

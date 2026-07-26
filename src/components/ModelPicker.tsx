@@ -142,8 +142,9 @@ export function ModelPicker({
       authMode: focusedOption?.authMode,
       model: focusedModel ?? getDefaultMainLoopModel(),
       storedReasoning: focusedOption?.reasoning,
+      currentEffort: effortValue,
     }),
-    [focusedModel, focusedOption?.authMode, focusedOption?.providerKind, focusedOption?.reasoning],
+    [effortValue, focusedModel, focusedOption?.authMode, focusedOption?.providerKind, focusedOption?.reasoning],
   );
   const resolvedSelection = clampReasoningSelection(reasoningSelection, focusedSpec);
   const indicatorLabel = getReasoningIndicatorLabel(resolvedSelection, focusedSpec);
@@ -157,6 +158,7 @@ export function ModelPicker({
       authMode: nextOption?.authMode,
       model: nextModel,
       storedReasoning: nextOption?.reasoning,
+      currentEffort: effortValue,
     });
     setReasoningSelection(prev => {
       if (!hasToggledReasoning && effortValue === undefined) {

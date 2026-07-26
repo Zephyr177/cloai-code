@@ -25,7 +25,12 @@ import { OAUTH_BETA_HEADER } from '../constants/oauth.js'
 import { isClaudeAISubscriber } from './auth.js'
 import { has1mContext } from './context.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
+import { modelHasCapability } from './model/capabilities.js'
 import { getCanonicalName } from './model/model.js'
+import {
+  isClaudeVersionAtLeast,
+  parseModelVersion,
+} from './model/modelVersion.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './model/providers.js'
 import { getInitialSettings } from './settings/settings.js'
@@ -138,22 +143,8 @@ export function modelSupportsContextManagement(model: string): boolean {
   )
 }
 
-// @[MODEL LAUNCH]: Add the new model ID to this list if it supports structured outputs.
 export function modelSupportsStructuredOutputs(model: string): boolean {
-  const canonical = getCanonicalName(model)
-  const provider = getAPIProvider()
-  // Structured outputs only supported on firstParty and Foundry (not Bedrock/Vertex yet)
-  if (provider !== 'firstParty' && provider !== 'foundry') {
-    return false
-  }
-  return (
-    canonical.includes('claude-sonnet-4-6') ||
-    canonical.includes('claude-sonnet-4-5') ||
-    canonical.includes('claude-opus-4-1') ||
-    canonical.includes('claude-opus-4-5') ||
-    canonical.includes('claude-opus-4-6') ||
-    canonical.includes('claude-haiku-4-5')
-  )
+  return modelHasCapability(model, 'structuredOutputs')
 }
 
 // @[MODEL LAUNCH]: Add the new model if it supports auto mode (specifically PI probes) — ask in #proj-claude-code-safety-research.
@@ -182,14 +173,15 @@ export function modelSupportsAutoMode(model: string): boolean {
       return true
     }
     if (process.env.USER_TYPE === 'ant') {
-      // Denylist: block known-unsupported claude models, allow everything else (ant-internal models etc.)
-      if (m.includes('claude-3-')) return false
-      // claude-*-4 not followed by -[6-9]: blocks bare -4, -4-YYYYMMDD, -4@, -4-0 thru -4-5
-      if (/claude-(opus|sonnet|haiku)-4(?!-[6-9])/.test(m)) return false
-      return true
+      // Denylist: block known-unsupported claude models, allow everything else
+      // (ant-internal models etc.). Anything that doesn't parse as a Claude model
+      // is an internal model and stays allowed.
+      const parsed = parseModelVersion(m)
+      if (!parsed.isClaude) return true
+      return isClaudeVersionAtLeast(m, 4, 6)
     }
     // External allowlist (firstParty already checked above).
-    return /^claude-(opus|sonnet)-4-6/.test(m)
+    return modelHasCapability(model, 'autoMode')
   }
   return false
 }

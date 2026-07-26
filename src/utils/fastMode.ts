@@ -20,6 +20,7 @@ import { isInBundledMode } from './bundledMode.js'
 import { getGlobalConfig, saveGlobalConfig } from './config.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './envUtils.js'
+import { modelHasCapability } from './model/capabilities.js'
 import {
   getDefaultMainLoopModelSetting,
   isOpus1mMergeEnabled,
@@ -172,7 +173,7 @@ export function isFastModeSupportedByModel(
   }
   const model = modelSetting ?? getDefaultMainLoopModelSetting()
   const parsedModel = parseUserSpecifiedModel(model)
-  return parsedModel.toLowerCase().includes('opus-4-6')
+  return modelHasCapability(parsedModel, 'fastMode')
 }
 
 // --- Fast mode runtime state ---

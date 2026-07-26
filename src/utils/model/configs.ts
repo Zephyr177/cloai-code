@@ -1,7 +1,15 @@
 import type { ModelName } from './model.js'
 import type { APIProvider } from './providers.js'
 
-export type ModelConfig = Record<APIProvider, ModelName>
+/**
+ * `firstParty` is the canonical ID and the only required entry. The other providers are
+ * optional because we don't invent IDs we haven't seen: a model that has only shipped on
+ * the first-party API gets registered with just `firstParty`, and
+ * `getBuiltinModelStrings` falls back to it rather than guessing a Bedrock ARN.
+ */
+export type ModelConfig = { firstParty: ModelName } & Partial<
+  Record<Exclude<APIProvider, 'firstParty'>, ModelName>
+>
 
 // @[MODEL LAUNCH]: Add a new CLAUDE_*_CONFIG constant here. Double check the correct model strings
 // here since the pattern may change.
@@ -83,6 +91,15 @@ export const CLAUDE_SONNET_4_6_CONFIG = {
   foundry: 'claude-sonnet-4-6',
 } as const satisfies ModelConfig
 
+// First-party only so far — no Bedrock/Vertex/Foundry IDs to record yet.
+export const CLAUDE_OPUS_5_CONFIG = {
+  firstParty: 'claude-opus-5',
+} as const satisfies ModelConfig
+
+export const CLAUDE_FABLE_5_CONFIG = {
+  firstParty: 'claude-fable-5',
+} as const satisfies ModelConfig
+
 // @[MODEL LAUNCH]: Register the new config here.
 export const ALL_MODEL_CONFIGS = {
   haiku35: CLAUDE_3_5_HAIKU_CONFIG,
@@ -96,6 +113,8 @@ export const ALL_MODEL_CONFIGS = {
   opus41: CLAUDE_OPUS_4_1_CONFIG,
   opus45: CLAUDE_OPUS_4_5_CONFIG,
   opus46: CLAUDE_OPUS_4_6_CONFIG,
+  opus5: CLAUDE_OPUS_5_CONFIG,
+  fable5: CLAUDE_FABLE_5_CONFIG,
 } as const satisfies Record<string, ModelConfig>
 
 export type ModelKey = keyof typeof ALL_MODEL_CONFIGS

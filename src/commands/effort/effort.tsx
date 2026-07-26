@@ -10,6 +10,7 @@ import {
   getEffortEnvOverride,
   getEffortValueDescription,
   isEffortLevel,
+  parseEffortValue,
   toPersistableEffort,
 } from '../../utils/effort.js';
 import { readCustomApiStorage } from '../../utils/customApiStorage.js';
@@ -79,8 +80,12 @@ function setEffortValue(effortValue: EffortValue): EffortCommandResult {
   }
   const description = getEffortValueDescription(effortValue);
   const suffix = persistable !== undefined ? '' : ' (this session only)';
+  const note =
+    typeof effortValue === 'string' && !isEffortLevel(effortValue)
+      ? ' (unrecognized, sending to API as-is)'
+      : '';
   return {
-    message: `Set effort level to ${effortValue}${suffix}: ${description}`,
+    message: `Set effort level to ${effortValue}${note}${suffix}: ${description}`,
     effortUpdate: {
       value: effortValue
     }
@@ -147,12 +152,13 @@ export function executeEffort(args: string): EffortCommandResult {
   if (normalized === 'auto' || normalized === 'unset') {
     return unsetEffortLevel();
   }
-  if (!isEffortLevel(normalized)) {
+  const parsed = parseEffortValue(normalized);
+  if (parsed === undefined) {
     return {
-      message: `Invalid argument: ${args}. Valid options are: low, medium, high, max, auto`
+      message: `Invalid argument: ${args}. Pass an effort level (e.g. low, medium, high, max) or 'auto'`
     };
   }
-  return setEffortValue(normalized);
+  return setEffortValue(parsed);
 }
 
 function ShowCurrentEffort({ onDone }: { onDone: LocalJSXCommandOnDone }) {
@@ -181,7 +187,7 @@ function ApplyEffortAndClose({ result, onDone }: { result: EffortCommandResult; 
 export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, args?: string): Promise<React.ReactNode> {
   args = args?.trim() || '';
   if (COMMON_HELP_ARGS.includes(args)) {
-    onDone('Usage: /effort [low|medium|high|max|auto]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning (Opus 4.6 only)\n- auto: Use the default effort level for your model');
+    onDone('Usage: /effort [low|medium|high|max|auto|<custom>]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- max: Maximum capability with deepest reasoning\n- auto: Use the default effort level for your model\n\nAny other value is sent to the API unchanged, so newer levels work without an update.');
     return;
   }
   if (!args || args === 'current' || args === 'status') {

@@ -2,6 +2,7 @@ import type { BetaUsage } from '@anthropic-ai/sdk/resources/beta/messages/messag
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import { shouldIncludeFirstPartyOnlyBetas } from './betas.js'
 import { isEnvTruthy } from './envUtils.js'
+import { modelHasCapability } from './model/capabilities.js'
 import { getInitialSettings } from './settings/settings.js'
 
 // The SDK does not yet have types for advisor blocks.
@@ -84,25 +85,14 @@ export function getExperimentAdvisorModels():
     : undefined
 }
 
-// @[MODEL LAUNCH]: Add the new model if it supports the advisor tool.
 // Checks whether the main loop model supports calling the advisor tool.
 export function modelSupportsAdvisor(model: string): boolean {
-  const m = model.toLowerCase()
-  return (
-    m.includes('opus-4-6') ||
-    m.includes('sonnet-4-6') ||
-    process.env.USER_TYPE === 'ant'
-  )
+  return modelHasCapability(model, 'advisor')
 }
 
-// @[MODEL LAUNCH]: Add the new model if it can serve as an advisor model.
+// Whether the model can serve as an advisor model. Same requirements as calling it.
 export function isValidAdvisorModel(model: string): boolean {
-  const m = model.toLowerCase()
-  return (
-    m.includes('opus-4-6') ||
-    m.includes('sonnet-4-6') ||
-    process.env.USER_TYPE === 'ant'
-  )
+  return modelHasCapability(model, 'advisor')
 }
 
 export function getInitialAdvisorSetting(): string | undefined {

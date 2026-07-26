@@ -19,6 +19,7 @@
     "start": "bun run ./src/bootstrap-entry.ts",
     "version": "bun run ./src/bootstrap-entry.ts --version",
     "dev:restore-check": "bun run ./src/dev-entry.ts",
+    "test": "bun test",
     "vscode:check": "node ./packages/cloai-vscode/scripts/check.js",
     "vscode:package": "npm --prefix ./packages/cloai-vscode run package",
     "tauri:dev": "cd desktop-app && bun run tauri:dev",
@@ -104,5 +105,9 @@
     "color-diff-napi": "file:./shims/color-diff-napi",
     "modifiers-napi": "file:./shims/modifiers-napi",
     "url-handler-napi": "file:./shims/url-handler-napi"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "5.8.3"
   }
 }

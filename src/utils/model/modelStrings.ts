@@ -10,6 +10,7 @@ import {
   ALL_MODEL_CONFIGS,
   CANONICAL_ID_TO_KEY,
   type CanonicalModelId,
+  type ModelConfig,
   type ModelKey,
 } from './configs.js'
 import { type APIProvider, getAPIProvider } from './providers.js'
@@ -25,7 +26,9 @@ const MODEL_KEYS = Object.keys(ALL_MODEL_CONFIGS) as ModelKey[]
 function getBuiltinModelStrings(provider: APIProvider): ModelStrings {
   const out = {} as ModelStrings
   for (const key of MODEL_KEYS) {
-    out[key] = ALL_MODEL_CONFIGS[key][provider]
+    const config: ModelConfig = ALL_MODEL_CONFIGS[key]
+    // Models that have only shipped first-party carry no provider-specific ID.
+    out[key] = config[provider] ?? config.firstParty
   }
   return out
 }
